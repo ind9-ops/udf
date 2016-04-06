@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+RAID_LEVEL=0
+RAID_DEVICE='/dev/md0'
+FS_TYPE='ext4'
+EPHEMERAL_MOUNT_POINT='/opt/indix'
+
+ROOT_DEVICE=$(df -h | grep "/$" | awk '{ print $1 }' | awk -F '/' '{ print $3 }' | sed 's/.$//g')
+EPHEMERAL_DEVICES=$(cat /proc/partitions | sed -n '1,2!p' | grep -v ${ROOT_DEVICE} | awk '{ print "/dev/"$4 }')
+EPHEMERAL_DEVICES_COUNT=$(cat /proc/partitions | sed -n '1,2!p' | grep -v ${ROOT_DEVICE} | wc -l)
+
+if [ ${EPHEMERAL_DEVICES_COUNT} -ne 0 ]; then
+	for device in ${EPHEMERAL_DEVICES}; do umount $device; sed -i "s|${device}.*||g" /etc/fstab; done
+
+	if [ ${EPHEMERAL_DEVICES_COUNT} -ge 2 ]; then
+		apt-get update
+		apt-get install mdadm -y --no-install-recommends
+		yes | mdadm --create --verbose ${RAID_DEVICE} --level=${RAID_LEVEL} --raid-devices=${EPHEMERAL_DEVICES_COUNT} ${EPHEMERAL_DEVICES}
+		MOUNT_DEVICE=${RAID_DEVICE}
+	else
+		MOUNT_DEVICE=${EPHEMERAL_DEVICES}
+	fi
+
+	mkfs.${FS_TYPE} ${MOUNT_DEVICE}
+	#blkid sometimes returns null in the first attempt, bug with blkid
+	UUID=$(blkid ${MOUNT_DEVICE} | awk -F '"' '{ print $2 }')
+	UUID=$(blkid ${MOUNT_DEVICE} | awk -F '"' '{ print $2 }')
+
+	echo "UUID=$UUID ${EPHEMERAL_MOUNT_POINT}/     ${FS_TYPE}  defaults,nobootwait,noatime  0 0" >> /etc/fstab
+	mkdir ${EPHEMERAL_MOUNT_POINT}
+	mount -a
+fi
